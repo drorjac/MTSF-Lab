@@ -22,8 +22,7 @@ Use Python 3.11 and [uv](https://docs.astral.sh/uv/). Python 3.11.16 and depende
 are pinned in `.python-version` and `uv.lock`.
 
 ```bash
-cd DynForecastLab
-bash scripts/install.sh
+bash scripts/install.sh   # also registers the "DynForecastLab (.venv)" Jupyter kernel
 # Platform-independent equivalent, including Windows:
 uv sync --frozen --extra dev --extra references --extra research
 
@@ -164,9 +163,15 @@ atlas samples at most 150 displayed origins per run; metrics use all evaluation 
 ## PyCharm and development
 
 Open this folder and select its `.venv` interpreter. Shared `.run/` configurations
-cover tests, smoke benchmarks, and the research demonstration. Start with
-[01_quickstart.ipynb](notebooks/01_quickstart.ipynb) or
-[02_research_workflows.ipynb](notebooks/02_research_workflows.ipynb).
+cover tests, smoke benchmarks, and the research demonstration. Notebooks use the
+"DynForecastLab (.venv)" kernel that `scripts/install.sh` registers:
+
+| Notebook | What it shows |
+|---|---|
+| [01_quickstart](notebooks/01_quickstart.ipynb) | Simulated oscillator; temporal models vs learned evolution laws |
+| [02_research_workflows](notebooks/02_research_workflows.ipynb) | Observation sets, validation-only tuning, latent forecasts, atlas |
+| [03_real_data_quickstart](notebooks/03_real_data_quickstart.ipynb) | ETTh1 oil temperature, 24 h ahead, four model families |
+| [04_your_own_csv](notebooks/04_your_own_csv.ipynb) | Template for forecasting columns of any CSV |
 
 ```bash
 uv run --frozen --all-extras pytest -q
@@ -179,3 +184,9 @@ For restricted shells, keep `UV_CACHE_DIR`, `MPLCONFIGDIR`, and `XDG_CACHE_HOME`
 under the project or `/workspace`. No credentials or persistent services are required.
 Reusable cloud setup/startup instructions are saved in a draft; publishing the
 prepared environment snapshot is a separate product action.
+
+## Earlier work
+
+`archive/mts-signals-classification/` holds the final state of
+[MTS-Signals-Classifcation-TAU](https://github.com/drorjac/MTS-Signals-Classifcation-TAU)
+(2024–2026); its full commit history is merged into this repository.
