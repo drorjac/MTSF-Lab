@@ -1,4 +1,13 @@
+"""Single-experiment runner and sequential benchmark sweeps.
+
+``run_experiment`` goes through the same steps for every model:
+prepare data -> fit -> forecast the evaluation origins -> score -> save. Each
+run is written to ``<output>/<run_id>``, where the run id hashes the config,
+data, code, and package versions so identical runs can be resumed.
+"""
+
 import copy
+from dataclasses import dataclass
 import hashlib
 import itertools
 import json
@@ -9,13 +18,16 @@ import platform
 
 try:
     import resource
-except ImportError:  # Windows desktop environments do not expose POSIX rusage.
+except ImportError:  # not available on Windows
     resource = None
 import sys
 import time
 import traceback
+
+import filelock
 import numpy as np
 import torch
+
 from dynforecast.data import Standardizer, chronological_bounds, windows, load_csv, download_dataset
 from dynforecast.data.pipeline import corrupt
 from dynforecast.simulations import simulate
@@ -44,6 +56,14 @@ DEFAULT = {
     "output": "results",
     "dynamics_assumption": False,
 }
+ARTIFACTS = ("metrics.json", "predictions.npz", "model.pkl")
+COPIED_DIAGNOSTICS = (
+    "best_epoch",
+    "stop_epoch",
+    "peak_gpu_memory_bytes",
+    "training_seconds",
+    "solver_evaluations",
+)
 
 
 def merge(base, updates):
@@ -141,93 +161,369 @@ def environment_manifest():
     }
 
 
-def run_experiment(configuration, resume=True, deadline=None):
-    """Run one configured experiment and write its artifacts to ``output/<run_id>``.
+def _short_hash(value):
+    return hashlib.sha256(value.encode()).hexdigest()[:16]
 
-    The run id hashes the config, data, code, and package versions, so an
-    identical completed run is reused when ``resume`` is true. Returns the run
-    manifest, with ``status`` set to ``completed`` or ``failed``.
-    """
-    cfg = merge(DEFAULT, configuration)
-    cfg.pop("sweep", None)
-    if cfg["model"].get("device") == "auto":
-        cfg["model"]["device"] = "cuda" if torch.cuda.is_available() else "cpu"
-    if cfg["dataset"].get("trajectories") or cfg["dataset"]["name"] == "monash":
-        from .collection import run_collection
 
-        try:
-            return run_collection(cfg, resume, deadline)
-        except Exception as exc:
-            path = (
-                Path(cfg["output"])
-                / hashlib.sha256(json.dumps(cfg, sort_keys=True).encode()).hexdigest()[:16]
-            )
-            path.mkdir(parents=True, exist_ok=True)
-            result = {
-                "run_id": path.name,
-                "status": "failed",
-                "stage": "collection",
-                "config": cfg,
-                "error": f"{type(exc).__name__}: {exc}",
-            }
-            atomic_json(path / "manifest.json", result)
-            (path / "error.log").write_text(traceback.format_exc())
-            return result
-    seed_everything(cfg["seed"])
-    try:
-        series = load_series(cfg["dataset"])
-    except Exception as exc:
-        identity = {k: v for k, v in cfg.items() if k != "output"}
-        run_id = hashlib.sha256(
-            (json.dumps(identity, sort_keys=True) + ":ingestion").encode()
-        ).hexdigest()[:16]
-        folder = Path(cfg["output"]) / run_id
-        folder.mkdir(parents=True, exist_ok=True)
-        manifest = {
-            "run_id": run_id,
-            "status": "failed",
-            "stage": "ingestion",
-            "config": cfg,
-            "error": f"{type(exc).__name__}: {exc}",
-        }
-        atomic_json(folder / "manifest.json", manifest)
-        atomic_json(folder / "config.json", cfg)
-        (folder / "error.log").write_text(traceback.format_exc())
-        return manifest
+def _record_failure(folder, cfg, stage, exc):
+    """Write a failed-run manifest and traceback for an error before the run started."""
+    folder.mkdir(parents=True, exist_ok=True)
+    manifest = {
+        "run_id": folder.name,
+        "status": "failed",
+        "stage": stage,
+        "config": cfg,
+        "error": f"{type(exc).__name__}: {exc}",
+    }
+    atomic_json(folder / "manifest.json", manifest)
+    atomic_json(folder / "config.json", cfg)
+    (folder / "error.log").write_text(traceback.format_exc())
+    return manifest
+
+
+def run_identity(cfg, series):
+    """Hash everything that determines a result: config, data, code, and packages."""
     identity = {
         k: v for k, v in cfg.items() if k not in ("output", "budget_seconds", "sweep", "profile")
     }
     identity["data_sha256"] = fingerprint(series)
     identity["code_sha256"] = code_fingerprint()
     identity["packages"] = environment_manifest()["packages"]
-    run_id = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()[:16]
-    folder = Path(cfg["output"]) / run_id
-    folder.mkdir(parents=True, exist_ok=True)
-    manifest_path = folder / "manifest.json"
-    if resume and manifest_path.exists():
-        previous = json.loads(manifest_path.read_text())
-        if previous["status"] == "completed":
-            if all((folder / f).exists() for f in ("metrics.json", "predictions.npz", "model.pkl")):
-                return previous
-            raise RuntimeError("Completed run has missing artifacts; use --no-resume to rebuild")
-    # Exclusive process lock prevents accidental concurrent writes to identical run IDs.
-    lock = folder / ".lock"
-    if lock.exists():
+    return _short_hash(json.dumps(identity, sort_keys=True)), identity
+
+
+def _completed_run(folder):
+    """Return the manifest of a finished run in ``folder``, or None."""
+    path = folder / "manifest.json"
+    if not path.exists():
+        return None
+    previous = json.loads(path.read_text())
+    if previous["status"] != "completed":
+        return None
+    if not all((folder / name).exists() for name in ARTIFACTS):
+        raise RuntimeError("Completed run has missing artifacts; use --no-resume to rebuild")
+    return previous
+
+
+@dataclass
+class PreparedData:
+    """Standardized splits plus the bookkeeping needed to score and save a run."""
+
+    inputs: list
+    targets: list  # positions of the targets within ``inputs``
+    target_columns: list  # the targets as original observation columns
+    observations: np.ndarray
+    scaler: Standardizer
+    fitted: np.ndarray  # raw training rows the scaler was fitted on
+    train: np.ndarray
+    validation: np.ndarray
+    clean: np.ndarray  # whole series, standardized, never corrupted
+    corruption: dict
+    validation_start: int
+    test_start: int
+    train_end: int
+    dt: float
+
+
+def select_columns(cfg, series):
+    """Resolve and validate the input and target columns."""
+    inputs = cfg["inputs"] if cfg["inputs"] is not None else list(range(len(series.names)))
+    if len(set(inputs)) != len(inputs) or not inputs:
+        raise ValueError("Input feature indices must be nonempty and unique")
+    if any(not isinstance(i, int) or i < 0 or i >= len(series.names) for i in inputs):
+        raise ValueError("Input indices must refer to existing observation columns")
+    target_columns = cfg["targets"]
+    if not target_columns or not all(t in inputs for t in target_columns):
+        raise ValueError("Targets must be nonempty and included in observed inputs")
+    return inputs, target_columns
+
+
+def check_model_assumptions(cfg, series, inputs):
+    """Reject data a model family cannot handle, before any fitting."""
+    name = cfg["model"]["name"]
+    if name in DYNAMICAL_MODELS:
+        if series.inputs is not None:
+            raise ValueError(
+                "Autonomous dynamics models cannot ignore forcing; use temporal models"
+            )
+        if not np.allclose(np.diff(series.time), np.diff(series.time)[0], rtol=1e-5):
+            raise ValueError("Dynamics currently require regular sampling")
+        n_states = None if series.latent is None else series.latent.shape[1]
+        full_state = (
+            n_states is not None
+            and len(inputs) == n_states
+            and series.metadata.get("observed") == list(range(n_states))
+        )
+        if name != "latent_ode" and not full_state and not cfg["dynamics_assumption"]:
+            raise ValueError("Partial/real observations require explicit dynamics_assumption=true")
+    if name in PRIOR_MODELS and (inputs != [0, 1] or series.inputs is not None):
+        raise ValueError(
+            "Oscillator prior requires unforced, ordered position/velocity inputs [0,1]"
+        )
+
+
+def prepare_data(cfg, series):
+    """Validate the run against the data and build standardized chronological splits."""
+    inputs, target_columns = select_columns(cfg, series)
+    observations = series.observations[:, inputs]
+    validation_start, test_start = chronological_bounds(len(observations), **cfg["split"])
+    fraction = cfg["train_fraction"]
+    if not 0 < fraction <= 1:
+        raise ValueError("Training fraction must be in (0,1]")
+    train_end = int(validation_start * fraction)
+    history = cfg["history"]
+    if train_end < history + cfg["horizon"]:
+        raise ValueError("Training subset too short; increase fraction or reduce windows")
+    check_model_assumptions(cfg, series, inputs)
+
+    corruption = dict(cfg["corruption"])
+    protocol = corruption.pop("protocol", "test_time")
+    if protocol not in ("test_time", "robust_training"):
+        raise ValueError("Corruption protocol must be test_time or robust_training")
+    fitted = observations[:train_end].copy()
+    if protocol == "robust_training":
+        fitted = corrupt(fitted, cfg["seed"] + 1000, **corruption)
+    scaler = Standardizer().fit(fitted)
+    clean = scaler.transform(observations)
+    return PreparedData(
+        inputs=inputs,
+        targets=[inputs.index(t) for t in target_columns],
+        target_columns=target_columns,
+        observations=observations,
+        scaler=scaler,
+        fitted=fitted,
+        train=scaler.transform(fitted),
+        # Validation windows start one history before the split so targets stay inside it.
+        validation=clean[validation_start - history : test_start],
+        clean=clean,
+        corruption=corruption,
+        validation_start=validation_start,
+        test_start=test_start,
+        train_end=train_end,
+        dt=float(np.diff(series.time)[0]),
+    )
+
+
+def fit_model(cfg, data, folder, resume, deadline):
+    """Build the configured model and fit it, passing the options its family needs."""
+    model = make_model(cfg["model"]["name"], cfg["model"], cfg["seed"])
+    validation = data.validation
+    options = {}
+    if isinstance(model, (NeuralForecaster, NeuralODE, HybridForecaster)):
+        options = {"deadline": deadline, "checkpoint": folder / "checkpoint.pt", "resume": resume}
+        if cfg.get("tracking", {}).get("tensorboard"):
+            options["tensorboard_dir"] = folder / "tensorboard"
+    if isinstance(model, (NeuralODE, MechanisticOscillator, HybridForecaster)):
+        options.update(mean=data.scaler.mean, scale=data.scaler.scale)
+    if isinstance(model, NeuralODE):
+        # ODEs fit trajectories, so they validate on the split itself, without history.
+        validation = data.clean[data.validation_start : data.test_start]
+    model.fit(
+        data.train, validation, data.targets, cfg["history"], cfg["horizon"], data.dt, **options
+    )
+    return model
+
+
+@dataclass
+class Forecasts:
+    split: str
+    start: int
+    origins: np.ndarray
+    histories: np.ndarray  # standardized model inputs, possibly corrupted
+    truth: np.ndarray
+    predictions: np.ndarray
+    inference_seconds: float
+
+
+def forecast(cfg, data, model):
+    """Forecast every evaluation origin and return predictions in original units."""
+    split = cfg.get("evaluation", "test")
+    if split not in ("test", "validation"):
+        raise ValueError("Evaluation must be test or validation")
+    history, horizon, stride = cfg["history"], cfg["horizon"], cfg["stride"]
+    start, stop = (
+        (data.validation_start, data.test_start)
+        if split == "validation"
+        else (data.test_start, len(data.clean))
+    )
+    _, _, origins = windows(
+        data.clean, history, horizon, data.targets, start=start, stop=stop, stride=stride
+    )
+    # Corruption only touches the model's inputs, never the targets or the training data.
+    observed = data.observations.copy()
+    observed[start - history :] = corrupt(
+        observed[start - history :], cfg["seed"] + 2000, **data.corruption
+    )
+    histories, _, _ = windows(
+        data.scaler.transform(observed),
+        history,
+        horizon,
+        data.targets,
+        start=start,
+        stop=stop,
+        stride=stride,
+    )
+    truth = np.stack([data.observations[o : o + horizon, data.targets] for o in origins])
+    if not np.isfinite(truth).all():
+        raise ValueError(
+            "Evaluation targets contain missing values; choose a complete target period"
+        )
+    tick = time.perf_counter()
+    predictions = check_predictions(model.predict(histories), truth.shape)
+    inference_seconds = time.perf_counter() - tick
+    return Forecasts(
+        split=split,
+        start=start,
+        origins=origins,
+        histories=histories,
+        truth=truth,
+        predictions=data.scaler.inverse(predictions, data.targets),
+        inference_seconds=inference_seconds,
+    )
+
+
+def _peak_memory_bytes():
+    if resource is None:
+        return None
+    # ru_maxrss is bytes on macOS and kilobytes on Linux.
+    return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * (
+        1 if sys.platform == "darwin" else 1024
+    )
+
+
+def _count_flops(model, histories):
+    """FLOPs for one forecast origin, counted by the PyTorch profiler."""
+    diagnostics = copy.deepcopy(model.diagnostics)  # predict may overwrite them
+    with torch.profiler.profile(
+        activities=[torch.profiler.ProfilerActivity.CPU], with_flops=True
+    ) as profiler:
+        model.predict(histories[:1])
+    model.diagnostics = diagnostics
+    return sum(event.flops for event in profiler.key_averages())
+
+
+def score(cfg, series, data, model, result, fit_seconds):
+    """Forecast accuracy plus cost, capacity, and model-specific diagnostics."""
+    metrics = forecast_metrics(
+        result.truth,
+        result.predictions,
+        data.scaler.impute(data.fitted)[:, data.targets],
+        cfg.get("seasonality", 1),
+    )
+    metrics.update(
+        fit_seconds=fit_seconds,
+        inference_seconds=result.inference_seconds,
+        latency_per_origin_seconds=result.inference_seconds / len(result.origins),
+        parameter_count=int(model.parameters),
+        n_training_observations=data.train_end,
+        n_training_trajectories=1,
+        n_test_origins=len(result.origins),
+        process_peak_rss_bytes=_peak_memory_bytes(),
+        memory_scope="whole-process high-water mark, not incremental model memory",
+        rollout=model.rollout,
+        physical_horizon=cfg["horizon"] * data.dt,
+    )
+    if isinstance(model, SINDy):
+        metrics.update(equation_metrics(model, series, data.scaler, data.inputs, result.start))
+    metrics["evaluation_split"] = result.split
+    for key in COPIED_DIAGNOSTICS:
+        if key in (model.diagnostics or {}):
+            metrics[key] = model.diagnostics[key]
+    if cfg.get("profile_flops") and hasattr(model, "network"):
+        metrics["supported_operation_flops_per_origin"] = _count_flops(model, result.histories)
+        metrics["flop_scope"] = (
+            "PyTorch-supported matmul/convolution operations only; excludes solver/control overhead"
+        )
+    metrics["prediction_stability"] = {
+        "finite_fraction": 1.0,
+        "max_absolute_value": float(np.max(np.abs(result.predictions))),
+    }
+    if cfg.get("dynamical_metrics"):
+        from dynforecast.evaluation.dynamics import dynamical_metrics
+
+        metrics["dynamical_fidelity"] = dynamical_metrics(result.truth, result.predictions, data.dt)
+    return metrics
+
+
+def save_artifacts(folder, cfg, series, data, model, result, metrics):
+    atomic_json(folder / "metrics.json", metrics)
+    atomic_json(folder / "diagnostics.json", model.diagnostics or {})
+    atomic_json(
+        folder / "preprocessing.json",
+        {
+            "mean": data.scaler.mean.tolist(),
+            "scale": data.scaler.scale.tolist(),
+            "inputs": data.inputs,
+            "targets": data.targets,
+            "train_end": data.train_end,
+            "validation_start": data.validation_start,
+            "test_start": data.test_start,
+            "imputation": "causal forward fill",
+        },
+    )
+    history, horizon, origins = cfg["history"], cfg["horizon"], result.origins
+    np.savez_compressed(
+        folder / "predictions.npz",
+        truth=result.truth,
+        predictions=result.predictions,
+        origins=origins,
+        time=series.time[origins],
+        target_times=np.stack([series.time[o : o + horizon] for o in origins]),
+        history=np.stack([data.observations[o - history : o, data.targets] for o in origins]),
+        history_times=np.stack([series.time[o - history : o] for o in origins]),
+        target_names=np.array([series.names[t] for t in data.target_columns]),
+    )
+    with (folder / "model.tmp").open("wb") as f:
+        pickle.dump(model, f)
+    os.replace(folder / "model.tmp", folder / "model.pkl")
+    if cfg.get("tracking", {}).get("mlflow"):
+        from dynforecast.training.tracking import log_mlflow
+
+        log_mlflow(folder, cfg, metrics)
+
+
+def run_experiment(configuration, resume=True, deadline=None):
+    """Run one configured experiment and write its artifacts to ``output/<run_id>``.
+
+    An identical completed run is reused when ``resume`` is true. Returns the run
+    manifest, with ``status`` set to ``completed``, ``failed``, or ``interrupted``.
+    """
+    cfg = merge(DEFAULT, configuration)
+    cfg.pop("sweep", None)
+    if cfg["model"].get("device") == "auto":
+        cfg["model"]["device"] = "cuda" if torch.cuda.is_available() else "cpu"
+    output = Path(cfg["output"])
+
+    if cfg["dataset"].get("trajectories") or cfg["dataset"]["name"] == "monash":
+        from .collection import run_collection
+
         try:
-            owner = int(lock.read_text())
-            os.kill(owner, 0)
-        except ProcessLookupError:
-            lock.unlink(missing_ok=True)
-        except (ValueError, PermissionError):
-            raise RuntimeError(f"Cannot establish lock owner; inspect {lock}") from None
+            return run_collection(cfg, resume, deadline)
+        except Exception as exc:
+            folder = output / _short_hash(json.dumps(cfg, sort_keys=True))
+            return _record_failure(folder, cfg, "collection", exc)
+
+    seed_everything(cfg["seed"])
     try:
-        lock_fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-    except FileExistsError:
-        raise RuntimeError(
-            f"Run {run_id} is locked; inspect recorded PID before clearing {lock}"
-        ) from None
-    os.write(lock_fd, str(os.getpid()).encode())
-    os.close(lock_fd)
+        series = load_series(cfg["dataset"])
+    except Exception as exc:
+        identity = {k: v for k, v in cfg.items() if k != "output"}
+        folder = output / _short_hash(json.dumps(identity, sort_keys=True) + ":ingestion")
+        return _record_failure(folder, cfg, "ingestion", exc)
+
+    run_id, identity = run_identity(cfg, series)
+    folder = output / run_id
+    folder.mkdir(parents=True, exist_ok=True)
+    if resume and (previous := _completed_run(folder)):
+        return previous
+
+    try:
+        lock = filelock.FileLock(str(folder / ".lock"), timeout=0)
+        lock.acquire()
+    except filelock.Timeout:
+        raise RuntimeError(f"Run {run_id} is already running in another process") from None
+
+    manifest_path = folder / "manifest.json"
     manifest = {
         "run_id": run_id,
         "status": "running",
@@ -243,219 +539,26 @@ def run_experiment(configuration, resume=True, deadline=None):
     try:
         if deadline is not None and time.monotonic() >= deadline:
             raise TimeoutError("Budget exhausted before fit")
-        inputs = cfg["inputs"] if cfg["inputs"] is not None else list(range(len(series.names)))
-        if len(set(inputs)) != len(inputs) or not inputs:
-            raise ValueError("Input feature indices must be nonempty and unique")
-        if any(not isinstance(i, int) or i < 0 or i >= len(series.names) for i in inputs):
-            raise ValueError("Input indices must refer to existing observation columns")
-        targets_original = cfg["targets"]
-        if not targets_original or not all(t in inputs for t in targets_original):
-            raise ValueError("Targets must be nonempty and included in observed inputs")
-        targets = [inputs.index(t) for t in targets_original]
-        observations = series.observations[:, inputs]
-        a, b = chronological_bounds(len(observations), **cfg["split"])
-        fraction = cfg["train_fraction"]
-        if not 0 < fraction <= 1:
-            raise ValueError("Training fraction must be in (0,1]")
-        ntrain = int(a * fraction)
-        history, horizon = cfg["history"], cfg["horizon"]
-        if ntrain < history + horizon:
-            raise ValueError("Training subset too short; increase fraction or reduce windows")
-        name = cfg["model"]["name"]
-        dynamical = name in DYNAMICAL_MODELS
-        if dynamical:
-            if series.inputs is not None:
-                raise ValueError(
-                    "Autonomous dynamics models cannot ignore forcing; use temporal models"
-                )
-            if not np.allclose(np.diff(series.time), np.diff(series.time)[0], rtol=1e-5):
-                raise ValueError("Dynamics currently require regular sampling")
-            observed = series.metadata.get("observed")
-            full_state = (
-                series.latent is not None
-                and len(inputs) == series.latent.shape[1]
-                and observed == list(range(series.latent.shape[1]))
-            )
-            if name != "latent_ode" and not full_state and not cfg["dynamics_assumption"]:
-                raise ValueError(
-                    "Partial/real observations require explicit dynamics_assumption=true"
-                )
-            if name in PRIOR_MODELS and inputs != [0, 1]:
-                raise ValueError(
-                    "Oscillator prior requires ordered measured position, velocity inputs [0,1]"
-                )
-        corruption = dict(cfg["corruption"])
-        protocol = corruption.pop("protocol", "test_time")
-        if protocol not in ("test_time", "robust_training"):
-            raise ValueError("Corruption protocol must be test_time or robust_training")
-        fitted = observations[:ntrain].copy()
-        if protocol == "robust_training":
-            fitted = corrupt(fitted, cfg["seed"] + 1000, **corruption)
-        scaler = Standardizer().fit(fitted)
-        train = scaler.transform(fitted)
-        clean = scaler.transform(observations)
-        # Validation targets are fixed, and past context ends exactly at the split boundary.
-        validation = clean[a - history : b]
-        dt = float(np.diff(series.time)[0])
-        model = make_model(name, cfg["model"], cfg["seed"])
-        options = {}
-        if name in PRIOR_MODELS and (inputs != [0, 1] or series.inputs is not None):
-            raise ValueError(
-                "Oscillator-guided forecasting requires unforced position/velocity inputs [0,1]"
-            )
-        if isinstance(model, (NeuralForecaster, NeuralODE, HybridForecaster)):
-            options = {
-                "deadline": deadline,
-                "checkpoint": folder / "checkpoint.pt",
-                "resume": resume,
-            }
-            if cfg.get("tracking", {}).get("tensorboard"):
-                options["tensorboard_dir"] = folder / "tensorboard"
-        if isinstance(model, NeuralODE):
-            validation = clean[a:b]
-            options.update(mean=scaler.mean, scale=scaler.scale)
-        elif isinstance(model, (MechanisticOscillator, HybridForecaster)):
-            options.update(mean=scaler.mean, scale=scaler.scale)
-        model.fit(train, validation, targets, history, horizon, dt, **options)
+        data = prepare_data(cfg, series)
+        model = fit_model(cfg, data, folder, resume, deadline)
         fit_seconds = time.perf_counter() - tick
-        evaluation = cfg.get("evaluation", "test")
-        if evaluation not in ("test", "validation"):
-            raise ValueError("Evaluation must be test or validation")
-        start, stop = (a, b) if evaluation == "validation" else (b, len(clean))
-        _, _, origins = windows(
-            clean, history, horizon, targets, start=start, stop=stop, stride=cfg["stride"]
-        )
-        # Test-only corruption never changes ground-truth targets or training preprocessing.
-        history_values = observations.copy()
-        history_values[start - history :] = corrupt(
-            history_values[start - history :], cfg["seed"] + 2000, **corruption
-        )
-        x, _, _ = windows(
-            scaler.transform(history_values),
-            history,
-            horizon,
-            targets,
-            start=start,
-            stop=stop,
-            stride=cfg["stride"],
-        )
-        truth = np.stack([observations[o : o + horizon, targets] for o in origins])
-        if not np.isfinite(truth).all():
-            raise ValueError(
-                "Evaluation targets contain missing values; choose a complete target period"
-            )
-        before = time.perf_counter()
-        predictions = check_predictions(model.predict(x), truth.shape)
-        inference = time.perf_counter() - before
-        predictions = scaler.inverse(predictions, targets)
-        metrics = forecast_metrics(
-            truth, predictions, scaler.impute(fitted)[:, targets], cfg.get("seasonality", 1)
-        )
-        metrics.update(
-            {
-                "fit_seconds": fit_seconds,
-                "inference_seconds": inference,
-                "latency_per_origin_seconds": inference / len(origins),
-                "parameter_count": int(model.parameters),
-                "n_training_observations": ntrain,
-                "n_training_trajectories": 1,
-                "n_test_origins": len(origins),
-                "process_peak_rss_bytes": (
-                    resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-                    * (1 if sys.platform == "darwin" else 1024)
-                )
-                if resource is not None
-                else None,
-                "memory_scope": "whole-process high-water mark, not incremental model memory",
-                "rollout": model.rollout,
-                "physical_horizon": horizon * dt,
-            }
-        )
-        if isinstance(model, SINDy):
-            metrics.update(equation_metrics(model, series, scaler, inputs, start))
-        metrics["evaluation_split"] = evaluation
-        if model.diagnostics:
-            for key in (
-                "best_epoch",
-                "stop_epoch",
-                "peak_gpu_memory_bytes",
-                "training_seconds",
-                "solver_evaluations",
-            ):
-                if key in model.diagnostics:
-                    metrics[key] = model.diagnostics[key]
-        if cfg.get("profile_flops") and hasattr(model, "network"):
-            saved_diagnostics = copy.deepcopy(model.diagnostics)
-            with torch.profiler.profile(
-                activities=[torch.profiler.ProfilerActivity.CPU], with_flops=True
-            ) as profiler:
-                model.predict(x[:1])
-            metrics["supported_operation_flops_per_origin"] = sum(
-                event.flops for event in profiler.key_averages()
-            )
-            metrics["flop_scope"] = (
-                "PyTorch-supported matmul/convolution operations only; excludes solver/control overhead"
-            )
-            model.diagnostics = saved_diagnostics
-        metrics["prediction_stability"] = {
-            "finite_fraction": 1.0,
-            "max_absolute_value": float(np.max(np.abs(predictions))),
-        }
-        if cfg.get("dynamical_metrics"):
-            from dynforecast.evaluation.dynamics import dynamical_metrics
-
-            metrics["dynamical_fidelity"] = dynamical_metrics(truth, predictions, dt)
-        atomic_json(folder / "metrics.json", metrics)
-        atomic_json(folder / "diagnostics.json", model.diagnostics or {})
-        atomic_json(
-            folder / "preprocessing.json",
-            {
-                "mean": scaler.mean.tolist(),
-                "scale": scaler.scale.tolist(),
-                "inputs": inputs,
-                "targets": targets,
-                "train_end": ntrain,
-                "validation_start": a,
-                "test_start": b,
-                "imputation": "causal forward fill",
-            },
-        )
-        np.savez_compressed(
-            folder / "predictions.npz",
-            truth=truth,
-            predictions=predictions,
-            origins=origins,
-            time=series.time[origins],
-            target_times=np.stack([series.time[o : o + horizon] for o in origins]),
-            history=np.stack([observations[o - history : o, targets] for o in origins]),
-            history_times=np.stack([series.time[o - history : o] for o in origins]),
-            target_names=np.array([series.names[t] for t in targets_original]),
-        )
-        with (folder / "model.tmp").open("wb") as f:
-            pickle.dump(model, f)
-        os.replace(folder / "model.tmp", folder / "model.pkl")
-        if cfg.get("tracking", {}).get("mlflow"):
-            from dynforecast.training.tracking import log_mlflow
-
-            log_mlflow(folder, cfg, metrics)
-        manifest.update(
-            status="completed", metrics=metrics, elapsed_seconds=time.perf_counter() - tick
-        )
+        result = forecast(cfg, data, model)
+        metrics = score(cfg, series, data, model, result, fit_seconds)
+        save_artifacts(folder, cfg, series, data, model, result, metrics)
+        manifest.update(status="completed", metrics=metrics)
     except BaseException as exc:
+        interrupted = isinstance(exc, (TimeoutError, KeyboardInterrupt))
         manifest.update(
-            status="interrupted"
-            if isinstance(exc, (TimeoutError, KeyboardInterrupt))
-            else "failed",
+            status="interrupted" if interrupted else "failed",
             error=f"{type(exc).__name__}: {exc}",
-            elapsed_seconds=time.perf_counter() - tick,
         )
         (folder / "error.log").write_text(traceback.format_exc())
-        atomic_json(manifest_path, manifest)
         if isinstance(exc, KeyboardInterrupt):
             raise
     finally:
+        manifest["elapsed_seconds"] = time.perf_counter() - tick
         atomic_json(manifest_path, manifest)
-        lock.unlink(missing_ok=True)
+        lock.release()
     return manifest
 
 
