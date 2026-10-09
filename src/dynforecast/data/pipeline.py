@@ -6,6 +6,13 @@ import numpy as np
 
 @dataclass
 class Series:
+    """Observed time series with optional simulator-only ground truth.
+
+    ``observations`` is ``[time, features]``. ``latent`` and ``derivatives`` are
+    set only for simulated systems and are used for evaluation, never fitting.
+    ``inputs`` holds exogenous forcing, if any.
+    """
+
     time: np.ndarray
     observations: np.ndarray
     names: list[str]
@@ -34,6 +41,8 @@ def chronological_bounds(n, train=0.6, validation=0.2):
 
 
 class Standardizer:
+    """Per-feature z-scoring fitted on training data, ignoring missing values."""
+
     def fit(self, training):
         if np.any(np.all(np.isnan(training), axis=0)):
             raise ValueError("A training feature contains no observed values")

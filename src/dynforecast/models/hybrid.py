@@ -8,6 +8,8 @@ from .neural import TemporalNetwork
 
 
 class OscillatorRollout(nn.Module):
+    """RK4 rollout of a damped oscillator in standardized coordinates."""
+
     def __init__(self, prior, mean, scale, horizon, dt):
         super().__init__()
         self.prior, self.horizon, self.dt = prior, horizon, dt
@@ -42,6 +44,11 @@ class OscillatorRollout(nn.Module):
 
 
 class HybridNetwork(nn.Module):
+    """Combine an oscillator rollout with an LSTM forecast.
+
+    ``forecast_residual`` adds them, ``average_hybrid`` averages them, and
+    ``adaptive_hybrid`` mixes them with a learned per-step gate."""
+
     def __init__(self, kind, history, horizon, targets, width, prior, mean, scale, dt):
         super().__init__()
         self.kind, self.targets = kind, targets
@@ -70,6 +77,8 @@ class HybridNetwork(nn.Module):
 
 
 class PhysicsLoss:
+    """Short- and long-horizon MSE plus a penalty for disagreeing with the prior's vector field."""
+
     def __init__(self, field, dt, short_weight=1.0, long_weight=1.0, dynamics_weight=0.01):
         self.field, self.dt = field, dt
         self.weights = short_weight, long_weight, dynamics_weight
@@ -94,6 +103,11 @@ class PhysicsLoss:
 
 
 class HybridForecaster(Forecaster):
+    """Oscillator-guided forecasters for two-state (position, velocity) data.
+
+    ``physics_guided`` trains a plain LSTM with :class:`PhysicsLoss`; the other
+    kinds train a :class:`HybridNetwork`."""
+
     def __init__(
         self,
         kind="forecast_residual",

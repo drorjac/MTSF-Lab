@@ -6,6 +6,10 @@ from .base import Forecaster
 
 
 class KalmanForecaster(Forecaster):
+    """Linear Gaussian state-space model fitted by ridge regression on transitions.
+
+    Filters each history with a Kalman filter, then propagates the mean."""
+
     rollout = "recursive"
 
     def __init__(self, observation_variance=0.01, ridge=0.001):

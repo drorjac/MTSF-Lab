@@ -7,6 +7,8 @@ from .dynamical import SINDy, PolynomialLibrary
 
 
 class XGBoostForecaster(Forecaster):
+    """Direct multi-horizon gradient boosting, one XGBoost regressor per output."""
+
     def __init__(self, trees=100, depth=4, seed=0):
         self.trees, self.depth, self.seed = trees, depth, seed
 
@@ -39,6 +41,8 @@ class XGBoostForecaster(Forecaster):
 
 
 class PySINDyForecaster(SINDy):
+    """SINDy fitted with the PySINDy library, used to cross-check :class:`SINDy`."""
+
     def fit(self, train, validation, targets, history, horizon, dt, **kwargs):
         import pysindy as ps
 

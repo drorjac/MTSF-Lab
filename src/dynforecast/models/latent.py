@@ -9,6 +9,8 @@ from .neural import NeuralForecaster
 
 
 class LatentDynamicsNetwork(nn.Module):
+    """GRU encoder to a latent initial state, a neural ODE in latent space, and a linear decoder."""
+
     def __init__(self, features, targets, horizon, dt, width, latent_size):
         super().__init__()
         self.encoder = nn.GRU(features, width, batch_first=True)
@@ -30,6 +32,8 @@ class LatentDynamicsNetwork(nn.Module):
 
 
 class LatentODEForecaster(NeuralForecaster):
+    """Latent ODE trained only against observed future values."""
+
     rollout = "latent continuous"
 
     def __init__(self, width=32, latent_size=4, **training):

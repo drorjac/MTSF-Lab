@@ -7,6 +7,8 @@ from .base import Forecaster
 
 
 class Persistence(Forecaster):
+    """Repeat the last observed value over the whole horizon."""
+
     def fit(self, train, validation, targets, history, horizon, dt, **kwargs):
         self.targets, self.horizon = targets, horizon
         return self
@@ -16,6 +18,8 @@ class Persistence(Forecaster):
 
 
 class SeasonalNaive(Persistence):
+    """Repeat the values observed one seasonal ``period`` earlier."""
+
     def __init__(self, period=24):
         if period < 1:
             raise ValueError("Seasonal period must be positive")
@@ -29,6 +33,10 @@ class SeasonalNaive(Persistence):
 
 
 class Regression(Forecaster):
+    """Direct multi-horizon regression on flattened history windows.
+
+    ``kind`` selects ridge regression or a random forest."""
+
     def __init__(self, kind="ridge", alpha=1.0, trees=100, seed=0):
         self.estimator = (
             Ridge(alpha=alpha)
@@ -59,6 +67,8 @@ class Regression(Forecaster):
 
 
 class AutoRegression(Forecaster):
+    """Ridge AR (targets only) or VAR (all inputs) rolled out one step at a time."""
+
     rollout = "recursive"
 
     def __init__(self, multivariate=False, lags=8, alpha=0.001):
@@ -87,6 +97,11 @@ class AutoRegression(Forecaster):
 
 
 class ARIMAForecaster(Forecaster):
+    """Per-target ARIMA fitted once on the training series.
+
+    At prediction time the fitted parameters are frozen and only the state is
+    filtered on each history."""
+
     rollout = "recursive"
 
     def __init__(self, order=(2, 0, 0)):

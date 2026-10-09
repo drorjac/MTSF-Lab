@@ -12,6 +12,8 @@ from .base import Forecaster
 
 
 class PolynomialLibrary:
+    """All monomials of the state up to ``degree``, including the constant term."""
+
     def __init__(self, dimensions, degree=2):
         self.terms = [()] + [
             c
@@ -31,6 +33,12 @@ class PolynomialLibrary:
 
 
 class SINDy(Forecaster):
+    """Sparse identification of nonlinear dynamics.
+
+    Estimates derivatives from the observations (finite differences or
+    Savitzky-Golay), fits a polynomial library with sequentially thresholded
+    least squares, and forecasts by integrating the learned ODE."""
+
     rollout = "continuous"
 
     def __init__(
@@ -177,6 +185,12 @@ class VectorNetwork(nn.Module):
 
 
 class NeuralODE(Forecaster):
+    """Neural vector field integrated with RK4.
+
+    Optionally adds the network as a residual on top of a damped-oscillator
+    prior (``prior``), a sparse SINDy fit (``sparse_prior``), or trains only the
+    prior's parameters (``train_prior`` with ``residual=False``)."""
+
     rollout = "continuous"
 
     def __init__(

@@ -6,6 +6,8 @@ from .base import Forecaster
 
 
 class TemporalNetwork(nn.Module):
+    """Shared architecture for the direct multi-horizon neural forecasters."""
+
     def __init__(self, kind, features, history, horizon, outputs, width, targets=None):
         super().__init__()
         self.kind, self.horizon, self.outputs = kind, horizon, outputs
@@ -83,6 +85,8 @@ class TemporalNetwork(nn.Module):
 
 
 class NeuralForecaster(Forecaster):
+    """Direct multi-horizon forecaster around a :class:`TemporalNetwork` of type ``kind``."""
+
     def __init__(self, kind="lstm", width=32, **training):
         self.kind, self.width, self.training = kind, width, training
 
