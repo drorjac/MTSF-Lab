@@ -1,0 +1,6 @@
+dataset: {name: co2, max_rows: 1200}
+history: 52
+horizon: 12
+targets: [0]
+stride: 12
+output: results/co2

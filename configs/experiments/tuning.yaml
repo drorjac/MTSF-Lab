@@ -1,0 +1,11 @@
+dataset: {name: oscillator, n: 500}
+model: {name: lstm, epochs: 15, patience: 5}
+history: 24
+horizon: 12
+output: results/tuning
+tuning:
+  trials: 6
+  budget_seconds: 300
+  space:
+    model.width: [8, 16, 32]
+    model.lr: [0.001, 0.005]

@@ -1,0 +1,13 @@
+profile: overnight
+dataset: {name: oscillator, n: 1200, dt: 0.05, seed: 17}
+model: {epochs: 80, patience: 10, width: 32, device: cpu}
+history: 24
+horizon: 12
+targets: [0]
+output: results/data_efficiency
+budget_seconds: 10800
+sweep:
+  train_fraction: [0.1, 0.25, 0.5, 1.0]
+  seed: [0, 1, 2]
+  model.name: [persistence, ar, var, mlp, lstm, tcn, sindy, neural_ode, hybrid]
+

@@ -1,0 +1,14 @@
+dataset:
+  name: ett
+  max_rows: 3000
+model: {name: persistence}
+history: 48
+horizon: 24
+targets: [6]
+stride: 24
+output: results/ett
+budget_seconds: 300
+sweep:
+  model.name: [persistence, ar, ridge, lstm]
+  seed: [0]
+

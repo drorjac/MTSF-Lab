@@ -1,0 +1,7 @@
+dataset: {name: oscillator, n: 500, trajectories: 5, dt: 0.05}
+inputs: [0]
+targets: [0]
+history: 24
+horizon: 12
+model: {name: latent_ode, latent_size: 4, width: 16, epochs: 20}
+output: results/latent_state

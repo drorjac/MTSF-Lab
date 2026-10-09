@@ -1,0 +1,7 @@
+profile: research
+budget_seconds: 86400
+model: {device: cpu, epochs: 150, patience: 15}
+sweep:
+  model.name: [persistence, var, lstm, tcn, sindy, neural_ode, hybrid]
+  seed: [0, 1, 2, 3, 4]
+

@@ -1,0 +1,14 @@
+profile: overnight
+dataset: {name: oscillator, n: 1200, dt: 0.05}
+model: {epochs: 60, patience: 8, width: 32}
+history: 24
+horizon: 12
+targets: [0, 1]
+output: results/robustness
+budget_seconds: 10800
+sweep:
+  corruption.protocol: [test_time, robust_training]
+  corruption.noise: [0.0, 0.05, 0.1, 0.2]
+  seed: [0, 1, 2]
+  model.name: [persistence, var, lstm, sindy, neural_ode, hybrid]
+

@@ -1,0 +1,6 @@
+dataset: {name: ett}
+targets: [6]
+history: 96
+horizon: 24
+stride: 24
+
