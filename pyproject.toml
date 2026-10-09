@@ -6,6 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "dynforecastlab"
 version = "0.2.0"
 description = "Reproducible forecasting and dynamical system identification experiments"
+license = { text = "MIT" }
 requires-python = ">=3.11,<3.13"
 dependencies = [
   "numpy==1.26.4", "scipy==1.13.1", "pandas==2.2.3",
