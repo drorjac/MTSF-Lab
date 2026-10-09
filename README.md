@@ -182,5 +182,3 @@ uv run --frozen --all-extras jupyter lab notebooks
 
 For restricted shells, keep `UV_CACHE_DIR`, `MPLCONFIGDIR`, and `XDG_CACHE_HOME`
 under the project or `/workspace`. No credentials or persistent services are required.
-Reusable cloud setup/startup instructions are saved in a draft; publishing the
-prepared environment snapshot is a separate product action.
