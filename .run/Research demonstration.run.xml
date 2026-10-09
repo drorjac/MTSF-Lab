@@ -1,0 +1,10 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="Research demonstration" type="PythonConfigurationType" factoryName="Python">
+    <option name="SCRIPT_NAME" value="$PROJECT_DIR$/scripts/research_demo.py" />
+    <option name="PARAMETERS" value="--output results/research_demo --budget-seconds 600 --epochs 15" />
+    <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$" />
+    <option name="IS_MODULE_SDK" value="true" />
+    <module name="DynForecastLab" />
+    <method v="2" />
+  </configuration>
+</component>
