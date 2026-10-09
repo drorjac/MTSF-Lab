@@ -1,4 +1,4 @@
-# DynForecastLab
+# MTSF-Lab
 
 A complete Python/PyTorch experiment platform for comparing time-series forecasts,
 learned evolution laws, and hybrid models on identical observed targets. Built from
