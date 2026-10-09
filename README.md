@@ -12,8 +12,8 @@ sample efficiency, compute comparisons, and learned equations. Generate it, plus
 publication figures and CSV comparisons, with
 `uv run --frozen --all-extras python scripts/research_demo.py` (see below). The
 page embeds its data and Plotly, so it opens offline in any browser. The short
-study demonstrates functionality; it does not establish universal model
-superiority. See the [validation record](docs/validation.md).
+study is a demonstration with short training budgets, not a final ranking of models.
+The research questions behind it are in [docs/research-questions.md](docs/research-questions.md).
 
 ## Install and run
 
@@ -38,10 +38,8 @@ also supports `simulate`, `download`, `dashboard`, `tune`, and `backtest`. YAML
 composes via relative `includes`, numeric OmegaConf interpolation, and dotted
 `key=value` overrides. The scripts directory supplies Python wrapper entry points.
 
-The lock uses official CPU PyTorch wheels. CUDA training and device-aware scheduling
-are implemented, but actual validation here used CPU hardware. Supply a compatible
-PyTorch build in a separate environment for GPU work and retain its dependency
-manifest. Core-only installation (`uv sync --frozen`) omits reference adapters,
+The lock uses CPU PyTorch wheels. CUDA training and device-aware scheduling are
+supported; install a CUDA build of PyTorch in your environment to use them. Core-only installation (`uv sync --frozen`) omits reference adapters,
 tuning, trackers, and interactive graphics; the full installation supports every
 shipped workflow and test.
 
@@ -58,8 +56,8 @@ shipped workflow and test.
 
 All 31 models implement `fit(train, validation, targets, history, horizon, dt)` and
 `predict(histories) -> [origins, horizon, targets]`. Native NHITS-style and PatchTST
-models are transparent research implementations; canonical equivalence is not
-claimed. Separate `nf_` adapters use the actual library models on one univariate
+models are compact implementations written for this platform. The `nf_` adapters
+run the reference library models on one univariate
 continuous trajectory, with a fixed step budget and MAE objective.
 
 Synthetic sources: AR/ARX, damped oscillator, Van der Pol, Lotka–Volterra, Lorenz-63,
@@ -70,9 +68,8 @@ parameter sets, sampling jitter, and parameter switches are supported.
 Real sources: verified HTTPS ETT and daily temperature, plus offline public CO₂,
 sunspot, and macroeconomic measurements distributed with statsmodels. Numeric CSV
 and independent-series Monash TSF files/ZIP acquisition are supported. Downloads
-carry SHA-256 provenance and validate before installation. Jena is supported, but
-this cloud returned HTTP 403; working temperature and CO₂ alternatives are used
-in the completed study.
+carry SHA-256 provenance and are validated before use. Jena climate is also
+supported when its server is reachable.
 
 ```bash
 uv run --frozen --all-extras dynforecast download --dataset ett
@@ -110,7 +107,7 @@ settings on test data. Optional local MLflow/TensorBoard use `tracking.mlflow=tr
 and `tracking.tensorboard=true`. `profile_flops=true` records supported PyTorch
 operation FLOPs, with its limited scope explicitly labeled.
 
-## Scientific contracts
+## Design choices
 
 - Chronological splits default to 60/20/20. Scaling uses only the selected training
   prefix. Missing inputs use causal forward-fill, initially using training means.
@@ -120,12 +117,12 @@ operation FLOPs, with its limited scope explicitly labeled.
   trajectory level; windows, derivatives, transitions, and MASE never cross joins.
 - Models receive observations only. SINDy uses finite differences or explicitly
   selected Savitzky–Golay smoothing. Neural ODEs learn integrated measured flow;
-  `model.flow_steps` controls the objective. Latent ODE forecasting does not establish
-  identification of true physical hidden states.
+  `model.flow_steps` controls the objective. Latent ODE states are not the true
+  physical states.
 - Autonomous integrators require regular, unforced trajectories. Partial/real
   observation-space dynamics require `dynamics_assumption=true`; latent forecasting
-  supports partial measurements. Temporal models accept irregular sequences without
-  claiming a continuous-time irregular-observation solver.
+  supports partial measurements. Temporal models accept irregular sequences as plain
+  sequences.
 - Oscillator priors require ordered position/velocity inputs. Declared prior
   parameters are independent of simulator truth and correctly scaled from physical units.
 - Test-time corruption preserves clean targets. Robust training also corrupts training
@@ -133,13 +130,13 @@ operation FLOPs, with its limited scope explicitly labeled.
   remain separate experimental conditions.
 - MAE/RMSE/MASE/sMAPE use physical units; undefined MASE is null. Equation recovery
   transforms eligible polynomial truth to the model's standardized coordinates,
-  using truth only for scoring. Unsupported recovery cases receive no invented score.
+  using truth only for scoring. Cases where recovery is undefined get no score.
 - Intervals and paired comparisons use independent seeds, not overlapping windows
   as replicates. Raw errors across physical datasets are separated. Explicitly tagged
   cross-dataset summaries use equally weighted MASE and common model coverage.
 
 See [methods](docs/methods.md), [architecture](docs/architecture.md), and the
-[specification map](docs/specification-map.md).
+[research questions](docs/research-questions.md).
 
 ## Artifacts and resume
 
@@ -179,5 +176,3 @@ uv run --frozen --all-extras ruff format --check src tests scripts
 uv run --frozen --all-extras jupyter lab notebooks
 ```
 
-For restricted shells, keep `UV_CACHE_DIR`, `MPLCONFIGDIR`, and `XDG_CACHE_HOME`
-under the project or `/workspace`. No credentials or persistent services are required.

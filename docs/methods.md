@@ -12,8 +12,8 @@ models are separate fixed-step univariate references trained with MAE.
 
 AR/VAR use ridge-stabilized recursive least squares. ARIMA fits maximum-likelihood
 training parameters then filters observed local histories. Nonconvergence is a
-failed run. Noise-free deterministic oscillations may make innovation variance
-estimation singular, so the final demo validates ARIMA on stochastic AR data.
+failed run; on noise-free deterministic signals the innovation variance can be
+singular, so ARIMA is best compared on stochastic data such as the AR system.
 Ridge/forest/XGBoost predict windows directly. Kalman fits an observed-coordinate
 transition and covariance matrices, with identity observation mapping and
 Joseph-form covariance updates.
@@ -38,9 +38,9 @@ short-horizon, full-horizon, and declared dynamics penalties; checkpoint selecti
 uses measured validation forecast MSE.
 
 Latent ODE encodes observed history with a GRU, integrates inferred latent dynamics,
-and decodes measured targets. This does not identify true hidden physical coordinates.
+and decodes measured targets. The latent state is not the true physical state.
 Autonomous integrators require regular, unforced observations. Temporal networks
-accept irregular sequences without implementing a continuous observation-time solver.
+accept irregular sequences but treat them as plain sequences.
 
 ## Evaluation limits
 
@@ -48,14 +48,13 @@ Metrics use original units; MASE training differences stay within trajectories.
 Test-time corruption leaves targets clean. Robust training additionally alters
 training measurements. Polynomial recovery is scored only for eligible fully
 observed synthetic systems, with truth transformed to standardized coordinates for
-evaluation only. Partial, forced, and parameter-drift cases receive no misleading
-coefficient recovery score.
+evaluation only. Partial, forced, and parameter-drift cases get no recovery score.
 
 Wasserstein distributions, rollout autocorrelations, normalized Welch spectra, and
 maximum state norms are computed over separate rollout segments. Overlapping
 origins are never joined into fictional continuous orbits or used as independent
-interval replicates. These diagnostics do not estimate Lyapunov exponents or prove
-invariant-measure recovery, particularly on short chaotic trajectories.
+interval replicates. They are not Lyapunov-exponent estimates, and on short chaotic
+trajectories they say little about the invariant measure.
 
 Reports preserve data/source/target/protocol facets. Seed intervals use t statistics,
 and matched seed differences are paired. Tagged cross-dataset MASE gives each dataset
