@@ -8,4 +8,4 @@ mkdir -p "$MPLCONFIGDIR" "$XDG_CACHE_HOME"
 uv sync --frozen --extra dev --extra references --extra research
 .venv/bin/python -c 'import dynforecast, torch, pysindy, neuralforecast, optuna, plotly; print(dynforecast.__version__, torch.__version__)'
 
-.venv/bin/python -m ipykernel install --user --name dynforecast --display-name "DynForecastLab (.venv)"
+.venv/bin/python -m ipykernel install --user --name mtsf-lab --display-name "MTSF-Lab (.venv)"

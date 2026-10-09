@@ -22,7 +22,7 @@ Use Python 3.11 and [uv](https://docs.astral.sh/uv/). Python 3.11.16 and depende
 are pinned in `.python-version` and `uv.lock`.
 
 ```bash
-bash scripts/install.sh   # also registers the "DynForecastLab (.venv)" Jupyter kernel
+bash scripts/install.sh   # also registers the "MTSF-Lab (.venv)" Jupyter kernel
 # Platform-independent equivalent, including Windows:
 uv sync --frozen --extra dev --extra references --extra research
 
@@ -164,7 +164,7 @@ atlas samples at most 150 displayed origins per run; metrics use all evaluation 
 
 Open this folder and select its `.venv` interpreter. Shared `.run/` configurations
 cover tests, smoke benchmarks, and the research demonstration. Notebooks use the
-"DynForecastLab (.venv)" kernel that `scripts/install.sh` registers:
+"MTSF-Lab (.venv)" kernel that `scripts/install.sh` registers:
 
 | Notebook | What it shows |
 |---|---|
