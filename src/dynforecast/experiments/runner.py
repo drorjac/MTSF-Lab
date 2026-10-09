@@ -19,7 +19,7 @@ import torch
 from dynforecast.data import Standardizer, chronological_bounds, windows, load_csv, download_dataset
 from dynforecast.data.pipeline import corrupt
 from dynforecast.simulations import simulate
-from dynforecast.models import make_model
+from dynforecast.models import make_model, DYNAMICAL_MODELS, PRIOR_MODELS
 from dynforecast.models.base import check_predictions
 from dynforecast.models.dynamical import SINDy, NeuralODE
 from dynforecast.models.neural import NeuralForecaster
@@ -43,25 +43,6 @@ DEFAULT = {
     "corruption": {"protocol": "test_time", "noise": 0.0, "missing": 0.0},
     "output": "results",
     "dynamics_assumption": False,
-}
-DYNAMICAL_NAMES = {
-    "sindy",
-    "pysindy",
-    "neural_ode",
-    "hybrid",
-    "mechanistic",
-    "sindy_hybrid",
-    "trainable_mechanistic",
-}
-DYNAMICAL_NAMES.add("latent_ode")
-PRIOR_NAMES = {
-    "hybrid",
-    "mechanistic",
-    "trainable_mechanistic",
-    "forecast_residual",
-    "adaptive_hybrid",
-    "average_hybrid",
-    "physics_guided",
 }
 
 
@@ -161,6 +142,12 @@ def environment_manifest():
 
 
 def run_experiment(configuration, resume=True, deadline=None):
+    """Run one configured experiment and write its artifacts to ``output/<run_id>``.
+
+    The run id hashes the config, data, code, and package versions, so an
+    identical completed run is reused when ``resume`` is true. Returns the run
+    manifest, with ``status`` set to ``completed`` or ``failed``.
+    """
     cfg = merge(DEFAULT, configuration)
     cfg.pop("sweep", None)
     if cfg["model"].get("device") == "auto":
@@ -275,7 +262,7 @@ def run_experiment(configuration, resume=True, deadline=None):
         if ntrain < history + horizon:
             raise ValueError("Training subset too short; increase fraction or reduce windows")
         name = cfg["model"]["name"]
-        dynamical = name in DYNAMICAL_NAMES
+        dynamical = name in DYNAMICAL_MODELS
         if dynamical:
             if series.inputs is not None:
                 raise ValueError(
@@ -293,7 +280,7 @@ def run_experiment(configuration, resume=True, deadline=None):
                 raise ValueError(
                     "Partial/real observations require explicit dynamics_assumption=true"
                 )
-            if name in PRIOR_NAMES and inputs != [0, 1]:
+            if name in PRIOR_MODELS and inputs != [0, 1]:
                 raise ValueError(
                     "Oscillator prior requires ordered measured position, velocity inputs [0,1]"
                 )
@@ -312,7 +299,7 @@ def run_experiment(configuration, resume=True, deadline=None):
         dt = float(np.diff(series.time)[0])
         model = make_model(name, cfg["model"], cfg["seed"])
         options = {}
-        if name in PRIOR_NAMES and (inputs != [0, 1] or series.inputs is not None):
+        if name in PRIOR_MODELS and (inputs != [0, 1] or series.inputs is not None):
             raise ValueError(
                 "Oscillator-guided forecasting requires unforced position/velocity inputs [0,1]"
             )

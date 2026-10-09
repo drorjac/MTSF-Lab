@@ -10,7 +10,7 @@ import numpy as np
 from dynforecast.data import Standardizer, load_tsf
 from dynforecast.data.pipeline import corrupt, windows
 from dynforecast.simulations import SYSTEMS, simulate
-from dynforecast.models import make_model
+from dynforecast.models import make_model, DYNAMICAL_MODELS, PRIOR_MODELS
 from dynforecast.models.neural import NeuralForecaster
 from dynforecast.models.dynamical import NeuralODE
 from dynforecast.models.hybrid import HybridForecaster
@@ -71,8 +71,6 @@ def run_collection(cfg, resume=True, deadline=None):
         code_fingerprint,
         fingerprint,
         environment_manifest,
-        DYNAMICAL_NAMES,
-        PRIOR_NAMES,
     )
 
     seed_everything(cfg["seed"])
@@ -151,7 +149,7 @@ def run_collection(cfg, resume=True, deadline=None):
             validation = [scaler.transform(s.observations[:, inputs]) for s in collection[a:b]]
             name = cfg["model"]["name"]
             dt = float(np.diff(collection[0].time)[0])
-            if name in DYNAMICAL_NAMES:
+            if name in DYNAMICAL_MODELS:
                 if any(
                     s.inputs is not None or not np.allclose(np.diff(s.time), dt) for s in collection
                 ):
@@ -166,7 +164,7 @@ def run_collection(cfg, resume=True, deadline=None):
                     )
                 ):
                     raise ValueError("Observation-space dynamics assumption must be explicit")
-            if name in PRIOR_NAMES and inputs != [0, 1]:
+            if name in PRIOR_MODELS and inputs != [0, 1]:
                 raise ValueError("Oscillator prior requires ordered position/velocity")
             model = make_model(name, cfg["model"], cfg["seed"])
             options = {}
