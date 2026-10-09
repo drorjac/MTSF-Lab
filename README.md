@@ -1,20 +1,19 @@
 # MTSF-Lab
 
-A complete Python/PyTorch experiment platform for comparing time-series forecasts,
-learned evolution laws, and hybrid models on identical observed targets. Built from
-scratch from the [project specification](docs/project-plan.md), independently of
-pysteps and LSTM_ED.
+A Python/PyTorch platform for comparing time-series forecasters, learned
+evolution laws (SINDy, neural ODEs), and physics-informed hybrids on the same
+observed targets, with matched splits, budgets, and metrics.
 
-**Open the [interactive research atlas](results/end_to_end/dashboard/index.html)**
-for the finished demonstration: observed histories, forecast-origin sliders,
-calendar-time plots, phase portraits, learning curves, horizon heatmaps, sample
-efficiency, compute comparisons, and learned equations. The page embeds its data
-and Plotly, so it works offline in a normal browser. Publication figures and CSV
-comparisons are in the [scientific report](results/end_to_end/report/summary.html).
-The short study demonstrates functionality; it does not establish universal model
+![Interactive time-series research atlas](docs/images/atlas-preview.png)
+
+The screenshot is the interactive research atlas: observed histories,
+forecast-origin sliders, phase portraits, learning curves, horizon heatmaps,
+sample efficiency, compute comparisons, and learned equations. Generate it, plus
+publication figures and CSV comparisons, with
+`uv run --frozen --all-extras python scripts/research_demo.py` (see below). The
+page embeds its data and Plotly, so it opens offline in any browser. The short
+study demonstrates functionality; it does not establish universal model
 superiority. See the [validation record](docs/validation.md).
-
-![Interactive time-series research atlas](results/end_to_end/dashboard/preview.png)
 
 ## Install and run
 
