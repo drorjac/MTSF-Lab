@@ -1,0 +1,6 @@
+dataset: {name: reaction_diffusion, n: 300, grid: 8, dt: 0.05}
+targets: [0, 1]
+history: 24
+horizon: 12
+model: {name: lstm, epochs: 20, width: 16}
+output: results/spatial_dynamics

@@ -1,0 +1,10 @@
+dataset: {name: oscillator, n: 800, drift: {at: 32.0, params: {stiffness: 2.0, damping: 0.3}}}
+model: {epochs: 20, width: 16, patience: 5}
+history: 24
+horizon: 24
+targets: [0, 1]
+output: results/parameter_shift
+budget_seconds: 600
+sweep:
+  model.name: [persistence, var, lstm, sindy, neural_ode, hybrid]
+  seed: [0, 1, 2]

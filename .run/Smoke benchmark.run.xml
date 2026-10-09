@@ -1,0 +1,11 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="Smoke benchmark" type="PythonConfigurationType" factoryName="Python">
+    <option name="SCRIPT_NAME" value="$PROJECT_DIR$/scripts/run_benchmark.py" />
+    <option name="PARAMETERS" value="--config configs/experiments/smoke.yaml" />
+    <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$" />
+    <option name="IS_MODULE_SDK" value="true" />
+    <module name="DynForecastLab" />
+    <method v="2" />
+  </configuration>
+</component>
+

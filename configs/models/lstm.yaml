@@ -1,0 +1,2 @@
+model: {name: lstm, width: 32, epochs: 80, patience: 10, batch_size: 32, lr: 0.001}
+

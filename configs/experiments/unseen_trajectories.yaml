@@ -1,0 +1,10 @@
+dataset: {name: oscillator, n: 300, dt: 0.05, trajectories: 6, seed: 17}
+model: {epochs: 15, width: 16, patience: 5}
+history: 16
+horizon: 12
+targets: [0, 1]
+output: results/trajectories
+budget_seconds: 600
+sweep:
+  model.name: [persistence, var, lstm, sindy, neural_ode, hybrid, latent_ode]
+  seed: [0, 1, 2]

@@ -1,0 +1,6 @@
+dataset: {name: weather, max_rows: 2500}
+history: 60
+horizon: 14
+targets: [0]
+stride: 14
+output: results/weather

@@ -1,0 +1,6 @@
+dataset: {name: jena, max_rows: 12000}
+targets: [1]
+history: 144
+horizon: 36
+stride: 36
+

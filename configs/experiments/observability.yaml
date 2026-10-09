@@ -1,0 +1,12 @@
+dataset: {name: lotka_volterra, n: 1200, dt: 0.02}
+model: {epochs: 60, patience: 8, width: 32}
+history: 24
+horizon: 12
+targets: [0]
+output: results/observability
+budget_seconds: 10800
+sweep:
+  inputs: [[0], [0, 1]]
+  seed: [0, 1, 2]
+  model.name: [persistence, ar, ridge, mlp, lstm, tcn]
+

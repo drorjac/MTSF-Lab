@@ -1,0 +1,11 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="Tests" type="PythonConfigurationType" factoryName="Python">
+    <option name="SCRIPT_NAME" value="pytest" />
+    <option name="MODULE_MODE" value="true" />
+    <option name="PARAMETERS" value="-q" />
+    <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$" />
+    <option name="IS_MODULE_SDK" value="true" />
+    <module name="DynForecastLab" />
+    <method v="2" />
+  </configuration>
+</component>

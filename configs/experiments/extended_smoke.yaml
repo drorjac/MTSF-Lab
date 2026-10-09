@@ -1,0 +1,11 @@
+profile: smoke
+dataset: {name: oscillator, n: 300, dt: 0.05}
+model: {epochs: 3, width: 16, trees: 8, patience: 3, period: 8}
+history: 16
+horizon: 8
+targets: [0, 1]
+stride: 8
+output: results/extended_smoke
+budget_seconds: 300
+sweep:
+  model.name: [persistence, seasonal_naive, ar, var, arima, ridge, random_forest, mlp, lstm, gru, tcn, dlinear, transformer, nhits, patchtst, kalman, xgboost, sindy, pysindy, neural_ode, hybrid, mechanistic, forecast_residual, adaptive_hybrid, average_hybrid, physics_guided, sindy_hybrid, trainable_mechanistic, latent_ode]
